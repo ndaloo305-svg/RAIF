@@ -1,0 +1,76 @@
+name: RAIF iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "RAIF-source-with-ios-workflow.zip"
+      - ".github/workflows/raif-ios-ipa.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      NUVIO_IOS_DISTRIBUTION: appstore
+      GRADLE_OPTS: -Dfile.encoding=UTF-8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract RAIF project
+        run: |
+          set -euo pipefail
+          unzip -q RAIF-source-with-ios-workflow.zip -d source
+          test -f source/settings.gradle.kts
+          test -f source/iosApp/iosApp.xcodeproj/project.pbxproj
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build iOS app
+        working-directory: source
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios-derived-raif \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: source
+        run: |
+          set -euo pipefail
+          app="build/ios-derived-raif/Build/Products/Release-iphoneos/Nuvio.app"
+          test -d "$app"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName RAIF' "$app/Info.plist"
+          mkdir -p ../ipa/Payload
+          ditto "$app" ../ipa/Payload/RAIF.app
+          cd ../ipa
+          /usr/bin/zip -qry ../RAIF-unsigned.ipa Payload
+          unzip -tq ../RAIF-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAIF-unsigned-IPA
+          path: RAIF-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
